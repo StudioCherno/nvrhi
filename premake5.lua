@@ -9,6 +9,8 @@ project "NVRHI-Vulkan"
 
 	DefaultTargetParams(true)
 
+	forceincludes { "string" }
+
 	files {
 		"include/nvrhi/vulkan.h",
 		"src/vulkan/**.h",
@@ -114,6 +116,8 @@ filter {}
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
 	DefaultTargetParams(true)
+
+	forceincludes { "string" }
 
 	links {
 		"NVRHI-Vulkan",
