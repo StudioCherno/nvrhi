@@ -8,5 +8,7 @@ bin-int/
 *.sln
 *.vcxproj*
 
+obj/
+
 *make
 Makefile
