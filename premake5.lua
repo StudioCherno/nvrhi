@@ -7,6 +7,8 @@ project "NVRHI-Vulkan"
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
+	DefaultTargetParams(true)
+
 	files {
 		"include/nvrhi/vulkan.h",
 		"src/vulkan/**.h",
@@ -16,35 +18,12 @@ project "NVRHI-Vulkan"
 		"rtxmu/src/VulkanSuballocator.cpp",
 		"rtxmu/src/Logger.cpp"
 	}
-	
-	defines {
-		"NVRHI_WITH_RTXMU=1",
-		"VK_USE_PLATFORM_WIN32_KHR",
-		"NOMINMAX"
-	}
-
-	VULKAN_SDK = os.getenv("VULKAN_SDK")
 
 	includedirs {
 		"include",
 
-		"rtxmu/include",
-
-		"%{VULKAN_SDK}/Include",
+		"rtxmu/include"
 	}
-
-	filter "configurations:Debug"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		runtime "Release"
-		optimize "speed"
-
-    filter "configurations:Dist"
-		runtime "Release"
-		optimize "speed"
-        symbols "off"
 
 project "NVRHI-D3D11"
 	kind "StaticLib"
@@ -55,20 +34,21 @@ project "NVRHI-D3D11"
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
-	files {
-		"include/nvrhi/d3d11.h",
+	DefaultTargetParams(true)
 
-		"src/common/dxgi-format.h",
-		"src/common/dxgi-format.cpp",
+	if os.target() == "windows" then
+		files {
+			"include/nvrhi/d3d11.h",
 
-		"src/d3d11/**.h",
-		"src/d3d11/**.cpp",
-	}
-	
-	defines {
-		"NVRHI_WITH_RTXMU=1",
-		"NOMINMAX"
-	}
+			"src/common/dxgi-format.h",
+			"src/common/dxgi-format.cpp",
+
+			"src/d3d11/**.h",
+			"src/d3d11/**.cpp",
+		}
+	else
+		files { "%{HazelRootDirectory}/Hazel-ScriptCore/Source/Dummy.cpp" }
+	end
 
 	includedirs {
 		"include",
@@ -76,20 +56,15 @@ project "NVRHI-D3D11"
 		"rtxmu/include",
 	}
 
-	filter "configurations:Debug"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		runtime "Release"
-		optimize "speed"
-
-    filter "configurations:Dist"
-		runtime "Release"
-		optimize "speed"
-        symbols "off"
-
 project "NVRHI-D3D12"
+
+filter "not system:windows"
+    kind "StaticLib"
+
+    -- Mach-y AR requires a non-empty file list for archive creation
+    files { "%{HazelRootDirectory}/Hazel-ScriptCore/Source/Dummy.cpp" }
+
+filter "system:windows"
 	kind "StaticLib"
 	language "C++"
 	cppdialect "C++20"
@@ -98,25 +73,26 @@ project "NVRHI-D3D12"
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
-	files {
-		"include/nvrhi/d3d12.h",
+	DefaultTargetParams(true)
 
-		"src/common/dxgi-format.h",
-		"src/common/dxgi-format.cpp",
-		"src/common/versioning.h",
+	if os.target() == "windows" then
+		files {
+			"include/nvrhi/d3d12.h",
 
-		"src/d3d12/**.h",
-		"src/d3d12/**.cpp",
+			"src/common/dxgi-format.h",
+			"src/common/dxgi-format.cpp",
+			"src/common/versioning.h",
 
-		"rtxmu/src/D3D12AccelStructManager.cpp",
-		"rtxmu/src/D3D12Suballocator.cpp",
-		"rtxmu/src/Logger.cpp"
-	}
-	
-	defines {
-		"NVRHI_WITH_RTXMU=1",
-		"NOMINMAX"
-	}
+			"src/d3d12/**.h",
+			"src/d3d12/**.cpp",
+
+			"rtxmu/src/D3D12AccelStructManager.cpp",
+			"rtxmu/src/D3D12Suballocator.cpp",
+			"rtxmu/src/Logger.cpp"
+		}
+	else
+		files { "%{HazelRootDirectory}/Hazel-ScriptCore/Source/Dummy.cpp" }
+	end
 
 	includedirs {
 		"include",
@@ -125,20 +101,10 @@ project "NVRHI-D3D12"
 		"rtxmu/include",
 	}
 
-	filter "configurations:Debug"
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		runtime "Release"
-		optimize "speed"
-
-    filter "configurations:Dist"
-		runtime "Release"
-		optimize "speed"
-        symbols "off"
-
 project "NVRHI"
+
+filter {}
+
 	kind "StaticLib"
 	language "C++"
 	cppdialect "C++20"
@@ -147,23 +113,7 @@ project "NVRHI"
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
-	files {
-		"include/nvrhi/nvrhi.h",
-		"include/nvrhi/utils.h",
-
-		"include/nvrhi/common/**.h",
-		"src/common/**.cpp",
-
-		"src/validation/**.h",
-		"src/validation/**.cpp",
-
-		"tools/nvrhi.natvis"
-	}
-	
-	defines {
-		"NVRHI_WITH_RTXMU=1",
-		"NOMINMAX"
-	}
+	DefaultTargetParams(true)
 
 	links {
 		"NVRHI-Vulkan",
@@ -177,15 +127,21 @@ project "NVRHI"
 		"rtxmu/include",
 	}
 
-	filter "configurations:Debug"
-		runtime "Debug"
-		symbols "on"
+	files {
+		"include/nvrhi/nvrhi.h",
+		"include/nvrhi/utils.h",
 
-	filter "configurations:Release"
-		runtime "Release"
-		optimize "speed"
+		"include/nvrhi/common/**.h",
+		"src/common/aftermath.cpp",
+		"src/common/format-info.cpp",
+		"src/common/misc.cpp",
+		"src/common/state-tracking.cpp",
+		"src/common/state-tracking.h",
+		"src/common/utils.cpp",
+		"src/common/versioning.h",
 
-    filter "configurations:Dist"
-		runtime "Release"
-		optimize "speed"
-        symbols "off"
+		"src/validation/**.h",
+		"src/validation/**.cpp",
+
+		"tools/nvrhi.natvis"
+	}

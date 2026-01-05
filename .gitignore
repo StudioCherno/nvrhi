@@ -7,3 +7,6 @@ bin/
 bin-int/
 *.sln
 *.vcxproj*
+
+*make
+Makefile
