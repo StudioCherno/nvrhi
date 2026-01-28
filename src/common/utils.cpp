@@ -228,24 +228,24 @@ namespace nvrhi::utils
 
 	ShaderType ShaderStageFromString(const char* string)
 	{
-		if (string == "None")          return ShaderType::None;
-		if (string == "Compute")       return ShaderType::Compute;
-		if (string == "Vertex")        return ShaderType::Vertex;
-		if (string == "Hull")          return ShaderType::Hull;
-		if (string == "Domain")        return ShaderType::Domain;
-		if (string == "Geometry")      return ShaderType::Geometry;
-		if (string == "Pixel")         return ShaderType::Pixel;
-		if (string == "Amplification") return ShaderType::Amplification;
-		if (string == "Mesh")          return ShaderType::Mesh;
-		if (string == "AllGraphics")   return ShaderType::AllGraphics;
-		if (string == "RayGeneration") return ShaderType::RayGeneration;
-		if (string == "AnyHit")        return ShaderType::AnyHit;
-		if (string == "ClosestHit")    return ShaderType::ClosestHit;
-		if (string == "Miss")          return ShaderType::Miss;
-		if (string == "Intersection")  return ShaderType::Intersection;
-		if (string == "Callable")      return ShaderType::Callable;
-		if (string == "AllRayTracing") return ShaderType::AllRayTracing;
-		if (string == "All")           return ShaderType::All;
+		if (!strcmp(string, "None"))          return ShaderType::None;
+		if (!strcmp(string, "Compute"))       return ShaderType::Compute;
+		if (!strcmp(string, "Vertex"))        return ShaderType::Vertex;
+		if (!strcmp(string, "Hull"))          return ShaderType::Hull;
+		if (!strcmp(string, "Domain"))        return ShaderType::Domain;
+		if (!strcmp(string, "Geometry"))      return ShaderType::Geometry;
+		if (!strcmp(string, "Pixel"))         return ShaderType::Pixel;
+		if (!strcmp(string, "Amplification")) return ShaderType::Amplification;
+		if (!strcmp(string, "Mesh"))          return ShaderType::Mesh;
+		if (!strcmp(string, "AllGraphics"))   return ShaderType::AllGraphics;
+		if (!strcmp(string, "RayGeneration")) return ShaderType::RayGeneration;
+		if (!strcmp(string, "AnyHit"))        return ShaderType::AnyHit;
+		if (!strcmp(string, "ClosestHit"))    return ShaderType::ClosestHit;
+		if (!strcmp(string, "Miss"))          return ShaderType::Miss;
+		if (!strcmp(string, "Intersection"))  return ShaderType::Intersection;
+		if (!strcmp(string, "Callable"))      return ShaderType::Callable;
+		if (!strcmp(string, "AllRayTracing")) return ShaderType::AllRayTracing;
+		if (!strcmp(string, "All"))           return ShaderType::All;
 
 		return ShaderType::None;
 	}

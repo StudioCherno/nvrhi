@@ -23,12 +23,12 @@ project "NVRHI-Vulkan"
 
 	includedirs {
 		"include",
-
 		"rtxmu/include"
 	}
 
 project "NVRHI-D3D11"
 	kind "StaticLib"
+
 	language "C++"
 	cppdialect "C++20"
 	staticruntime "off"
@@ -68,6 +68,7 @@ filter "not system:windows"
 
 filter "system:windows"
 	kind "StaticLib"
+
 	language "C++"
 	cppdialect "C++20"
 	staticruntime "off"
