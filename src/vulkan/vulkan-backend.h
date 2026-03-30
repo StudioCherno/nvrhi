@@ -27,8 +27,10 @@
 #include <nvrhi/common/aftermath.h>
 #include "../common/state-tracking.h"
 #include "../common/versioning.h"
-#include <mutex>
+#include <atomic>
 #include <list>
+#include <mutex>
+#include <unordered_map>
 
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan.hpp>
@@ -288,15 +290,17 @@ namespace nvrhi::vulkan
     class VulkanAllocator
     {
     public:
+        enum class ResourceType : uint8_t { Texture, Buffer, Other };
+
         explicit VulkanAllocator(const VulkanContext& context)
             : m_Context(context)
         { }
 
-        vk::Result allocateBufferMemory(Buffer* buffer, bool enableBufferAddress = false) const;
-        void freeBufferMemory(Buffer* buffer) const;
+        vk::Result allocateBufferMemory(Buffer* buffer, bool enableBufferAddress = false);
+        void freeBufferMemory(Buffer* buffer);
 
-        vk::Result allocateTextureMemory(Texture* texture) const;
-        void freeTextureMemory(Texture* texture) const;
+        vk::Result allocateTextureMemory(Texture* texture);
+        void freeTextureMemory(Texture* texture);
 
         vk::Result allocateMemory(MemoryResource* res,
             vk::MemoryRequirements memRequirements,
@@ -304,11 +308,37 @@ namespace nvrhi::vulkan
             bool enableDeviceAddress = false,
             bool enableExportMemory = false,
             VkImage dedicatedImage = nullptr,
-            VkBuffer dedicatedBuffer = nullptr) const;
-        void freeMemory(MemoryResource* res) const;
+            VkBuffer dedicatedBuffer = nullptr);
+        void freeMemory(MemoryResource* res);
+
+        GPUMemoryStats getStats() const;
+
+        void trackAllocation(VkDeviceMemory memory, uint64_t size, ResourceType type, bool deviceLocal);
+        void untrackAllocation(VkDeviceMemory memory);
 
     private:
         const VulkanContext& m_Context;
+
+        // Per-allocation tracking record
+        struct AllocationRecord
+        {
+            uint64_t size = 0;
+            ResourceType type = ResourceType::Other;
+            bool deviceLocal = false;
+        };
+
+        mutable std::mutex m_StatsMutex;
+        std::unordered_map<VkDeviceMemory, AllocationRecord> m_AllocationMap;
+
+        // Running totals for fast stats query
+        std::atomic<uint64_t> m_TextureBytes{0};
+        std::atomic<uint32_t> m_TextureCount{0};
+        std::atomic<uint64_t> m_BufferBytes{0};
+        std::atomic<uint32_t> m_BufferCount{0};
+        std::atomic<uint64_t> m_OtherBytes{0};
+        std::atomic<uint32_t> m_OtherCount{0};
+        std::atomic<uint64_t> m_DeviceLocalBytes{0};
+        std::atomic<uint64_t> m_HostVisibleBytes{0};
     };
 
     class Heap : public MemoryResource, public RefCounter<IHeap>
@@ -1171,6 +1201,7 @@ namespace nvrhi::vulkan
         void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) override;
         void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) override;
         uint64_t queueGetCompletedInstance(CommandQueue queue) override;
+        GPUMemoryStats getGPUMemoryStats() const override { return m_Allocator.getStats(); }
 
     private:
         // Warning m_AftermathCrashDump helper must be first due to reverse destruction order

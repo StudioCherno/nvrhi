@@ -35,6 +35,25 @@ namespace nvrhi
 
 namespace nvrhi::vulkan
 {
+    struct GPUMemoryStats
+    {
+        // Per-resource-type breakdown
+        uint64_t TextureBytes = 0;
+        uint32_t TextureCount = 0;
+        uint64_t BufferBytes = 0;
+        uint32_t BufferCount = 0;
+        uint64_t OtherBytes = 0;     // heaps, staging, etc.
+        uint32_t OtherCount = 0;
+
+        // Per-memory-domain breakdown
+        uint64_t DeviceLocalBytes = 0;
+        uint64_t HostVisibleBytes = 0;
+
+        // Totals
+        uint64_t TotalAllocatedBytes = 0;
+        uint32_t TotalAllocationCount = 0;
+    };
+
     class IDevice : public nvrhi::IDevice
     {
     public:
@@ -43,6 +62,7 @@ namespace nvrhi::vulkan
         virtual void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) = 0;
         virtual void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) = 0;
         virtual uint64_t queueGetCompletedInstance(CommandQueue queue) = 0;
+        virtual GPUMemoryStats getGPUMemoryStats() const = 0;
     };
 
     typedef RefCountPtr<IDevice> DeviceHandle;

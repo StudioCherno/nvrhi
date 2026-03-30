@@ -712,6 +712,12 @@ namespace nvrhi::vulkan
 
         const vk::Result res = m_Allocator.allocateMemory(heap, memoryRequirements, memoryPropertyFlags, enableDeviceAddress);
 
+        if (res == vk::Result::eSuccess)
+        {
+            bool deviceLocal = (memoryPropertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal) != vk::MemoryPropertyFlags{};
+            m_Allocator.trackAllocation(heap->memory, memoryRequirements.size, VulkanAllocator::ResourceType::Other, deviceLocal);
+        }
+
         if (res != vk::Result::eSuccess)
         {
             std::stringstream ss;
@@ -736,6 +742,7 @@ namespace nvrhi::vulkan
     {
         if (memory && managed)
         {
+            m_Allocator.untrackAllocation(memory);
             m_Allocator.freeMemory(this);
             memory = vk::DeviceMemory();
         }

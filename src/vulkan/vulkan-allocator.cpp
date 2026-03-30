@@ -45,28 +45,94 @@ namespace nvrhi::vulkan
         return flags;
     }
 
-    vk::Result VulkanAllocator::allocateBufferMemory(Buffer *buffer, bool enableDeviceAddress) const
+    void VulkanAllocator::trackAllocation(VkDeviceMemory memory, uint64_t size, ResourceType type, bool deviceLocal)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_StatsMutex);
+            m_AllocationMap[memory] = { size, type, deviceLocal };
+        }
+
+        switch (type)
+        {
+        case ResourceType::Texture: m_TextureBytes += size; m_TextureCount++; break;
+        case ResourceType::Buffer:  m_BufferBytes += size;  m_BufferCount++;  break;
+        case ResourceType::Other:   m_OtherBytes += size;   m_OtherCount++;   break;
+        }
+
+        if (deviceLocal)
+            m_DeviceLocalBytes += size;
+        else
+            m_HostVisibleBytes += size;
+    }
+
+    void VulkanAllocator::untrackAllocation(VkDeviceMemory memory)
+    {
+        AllocationRecord record;
+        {
+            std::lock_guard<std::mutex> lock(m_StatsMutex);
+            auto it = m_AllocationMap.find(memory);
+            if (it == m_AllocationMap.end())
+                return;
+            record = it->second;
+            m_AllocationMap.erase(it);
+        }
+
+        switch (record.type)
+        {
+        case ResourceType::Texture: m_TextureBytes -= record.size; m_TextureCount--; break;
+        case ResourceType::Buffer:  m_BufferBytes -= record.size;  m_BufferCount--;  break;
+        case ResourceType::Other:   m_OtherBytes -= record.size;   m_OtherCount--;   break;
+        }
+
+        if (record.deviceLocal)
+            m_DeviceLocalBytes -= record.size;
+        else
+            m_HostVisibleBytes -= record.size;
+    }
+
+    GPUMemoryStats VulkanAllocator::getStats() const
+    {
+        GPUMemoryStats stats;
+        stats.TextureBytes = m_TextureBytes.load();
+        stats.TextureCount = m_TextureCount.load();
+        stats.BufferBytes = m_BufferBytes.load();
+        stats.BufferCount = m_BufferCount.load();
+        stats.OtherBytes = m_OtherBytes.load();
+        stats.OtherCount = m_OtherCount.load();
+        stats.DeviceLocalBytes = m_DeviceLocalBytes.load();
+        stats.HostVisibleBytes = m_HostVisibleBytes.load();
+        stats.TotalAllocatedBytes = stats.TextureBytes + stats.BufferBytes + stats.OtherBytes;
+        stats.TotalAllocationCount = stats.TextureCount + stats.BufferCount + stats.OtherCount;
+        return stats;
+    }
+
+    vk::Result VulkanAllocator::allocateBufferMemory(Buffer *buffer, bool enableDeviceAddress)
     {
         // figure out memory requirements
         vk::MemoryRequirements memRequirements;
         m_Context.device.getBufferMemoryRequirements(buffer->buffer, &memRequirements);
 
         // allocate memory
+        const auto memPropFlags = pickBufferMemoryProperties(buffer->desc);
         const bool enableMemoryExport = (buffer->desc.sharedResourceFlags & SharedResourceFlags::Shared) != 0;
-        const vk::Result res = allocateMemory(buffer, memRequirements, pickBufferMemoryProperties(buffer->desc), enableDeviceAddress, enableMemoryExport, nullptr, buffer->buffer);
+        const vk::Result res = allocateMemory(buffer, memRequirements, memPropFlags, enableDeviceAddress, enableMemoryExport, nullptr, buffer->buffer);
         CHECK_VK_RETURN(res)
+
+        bool deviceLocal = (memPropFlags & vk::MemoryPropertyFlagBits::eDeviceLocal) != vk::MemoryPropertyFlags{};
+        trackAllocation(buffer->memory, memRequirements.size, ResourceType::Buffer, deviceLocal);
 
         m_Context.device.bindBufferMemory(buffer->buffer, buffer->memory, 0);
 
         return vk::Result::eSuccess;
     }
 
-    void VulkanAllocator::freeBufferMemory(Buffer *buffer) const
+    void VulkanAllocator::freeBufferMemory(Buffer *buffer)
     {
+        untrackAllocation(buffer->memory);
         freeMemory(buffer);
     }
 
-    vk::Result VulkanAllocator::allocateTextureMemory(Texture *texture) const
+    vk::Result VulkanAllocator::allocateTextureMemory(Texture *texture)
     {
         // grab the image memory requirements
         vk::MemoryRequirements memRequirements;
@@ -79,13 +145,16 @@ namespace nvrhi::vulkan
         const vk::Result res = allocateMemory(texture, memRequirements, memProperties, enableDeviceAddress, enableMemoryExport, texture->image, nullptr);
         CHECK_VK_RETURN(res)
 
+        trackAllocation(texture->memory, memRequirements.size, ResourceType::Texture, true);
+
         m_Context.device.bindImageMemory(texture->image, texture->memory, 0);
 
         return vk::Result::eSuccess;
     }
 
-    void VulkanAllocator::freeTextureMemory(Texture *texture) const
+    void VulkanAllocator::freeTextureMemory(Texture *texture)
     {
+        untrackAllocation(texture->memory);
         freeMemory(texture);
     }
 
@@ -95,7 +164,7 @@ namespace nvrhi::vulkan
                                                 bool enableDeviceAddress,
                                                 bool enableExportMemory,
                                                 VkImage dedicatedImage,
-                                                VkBuffer dedicatedBuffer) const
+                                                VkBuffer dedicatedBuffer)
     {
         res->managed = true;
 
@@ -159,7 +228,7 @@ namespace nvrhi::vulkan
         return m_Context.device.allocateMemory(&allocInfo, m_Context.allocationCallbacks, &res->memory);
     }
 
-    void VulkanAllocator::freeMemory(MemoryResource *res) const
+    void VulkanAllocator::freeMemory(MemoryResource *res)
     {
         assert(res->managed);
 
