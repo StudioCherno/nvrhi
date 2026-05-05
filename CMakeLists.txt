@@ -246,7 +246,7 @@ if (NVRHI_WITH_DX11)
         target_include_directories(${nvrhi_d3d11_target} PRIVATE include)
     endif()
 
-    target_link_libraries(${nvrhi_d3d11_target} PUBLIC d3d11 dxguid)
+    target_link_libraries(${nvrhi_d3d11_target} PUBLIC d3d11 dxguid nvrhi)
 
     if (NVRHI_WITH_NVAPI)
         target_link_libraries(${nvrhi_d3d11_target} PUBLIC nvapi)
@@ -284,7 +284,7 @@ if (NVRHI_WITH_DX12)
 
     target_compile_definitions(${nvrhi_d3d12_target} PRIVATE NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP=$<BOOL:${NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP}>)
 
-    target_link_libraries(${nvrhi_d3d12_target} PUBLIC Microsoft::DirectX-Headers Microsoft::DirectX-Guids d3d12)
+    target_link_libraries(${nvrhi_d3d12_target} PUBLIC Microsoft::DirectX-Headers Microsoft::DirectX-Guids d3d12 nvrhi)
 
     if (NVRHI_WITH_NVAPI)
         target_link_libraries(${nvrhi_d3d12_target} PUBLIC nvapi)
@@ -330,6 +330,8 @@ if (NVRHI_WITH_VULKAN)
     elseif (TARGET Vulkan::Headers)
         target_link_libraries(${nvrhi_vulkan_target} PRIVATE Vulkan::Headers)
     endif()
+
+    target_link_libraries(${nvrhi_vulkan_target} PRIVATE nvrhi)
 
     if (NVRHI_WITH_AFTERMATH)
         target_link_libraries(${nvrhi_vulkan_target} PUBLIC aftermath)
