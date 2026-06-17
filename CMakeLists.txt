@@ -80,6 +80,15 @@ if (NVRHI_WITH_RTXMU)
     option(RTXMU_WITH_D3D12 "" ${NVRHI_WITH_DX12})
 
     add_subdirectory(rtxmu)
+
+    # rtxmu's AccelStructManager.h uses std::string without including <string>; it
+    # only built upstream via a transitive include. Force-include it here rather than
+    # patching the pristine NVIDIA-RTX/RTXMU submodule (which we don't fork).
+    if (MSVC)
+        target_compile_options(rtxmu PRIVATE /FI string)
+    else()
+        target_compile_options(rtxmu PRIVATE -include string)
+    endif()
 endif()
 
 if (NVRHI_WITH_NVAPI AND NOT TARGET nvapi)
