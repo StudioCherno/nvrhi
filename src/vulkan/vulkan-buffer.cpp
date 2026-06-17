@@ -248,6 +248,7 @@ namespace nvrhi::vulkan
         {
             requireBufferState(src, ResourceStates::CopySource);
             requireBufferState(dest, ResourceStates::CopyDest);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 
@@ -448,8 +449,6 @@ namespace nvrhi::vulkan
 
         assert(m_CurrentCmdBuf);
 
-        endRenderPass();
-
         m_CurrentCmdBuf->referencedResources.push_back(buffer);
 
         if (buffer->desc.isVolatile)
@@ -461,6 +460,10 @@ namespace nvrhi::vulkan
             return;
         }
 
+        // Per Vulkan spec, vkCmdUpdateBuffer is only allowed outside of a render pass, so end it here.
+        // Note that writeVolatileBuffer above is permitted so don't end the render pass for that case.
+        endRenderPass();
+
         const size_t vkCmdUpdateBufferLimit = 65536;
 
         // Per Vulkan spec, vkCmdUpdateBuffer requires that the data size is smaller than or equal to 64 kB,
@@ -471,6 +474,7 @@ namespace nvrhi::vulkan
             if (m_EnableAutomaticBarriers)
             {
                 requireBufferState(buffer, ResourceStates::CopyDest);
+                m_BindingStatesDirty = true;
             }
             commitBarriers();
 
@@ -502,7 +506,7 @@ namespace nvrhi::vulkan
 
     void CommandList::clearBufferUInt(IBuffer* b, uint32_t clearValue)
     {
-        Buffer* vkbuf = checked_cast<Buffer*>(b);
+        Buffer* buffer = checked_cast<Buffer*>(b);
 
         assert(m_CurrentCmdBuf);
 
@@ -510,11 +514,12 @@ namespace nvrhi::vulkan
 
         if (m_EnableAutomaticBarriers)
         {
-            requireBufferState(vkbuf, ResourceStates::CopyDest);
+            requireBufferState(buffer, ResourceStates::CopyDest);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 
-        m_CurrentCmdBuf->cmdBuf.fillBuffer(vkbuf->buffer, 0, vkbuf->desc.byteSize, clearValue);
+        m_CurrentCmdBuf->cmdBuf.fillBuffer(buffer->buffer, 0, buffer->desc.byteSize, clearValue);
         m_CurrentCmdBuf->referencedResources.push_back(b);
     }
 

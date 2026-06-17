@@ -381,11 +381,13 @@ namespace nvrhi::vulkan
 
         pso->usesBlendConstants = blendState.usesConstantColor(uint32_t(fbinfo.colorFormats.size()));
 
-        static_vector<vk::DynamicState, 5> dynamicStates = {
+        static_vector<vk::DynamicState, 6> dynamicStates = {
             vk::DynamicState::eViewport,
-            vk::DynamicState::eScissor
+            vk::DynamicState::eScissor,
         };
-        if (pso->usesBlendConstants)
+		if (pso->desc.dynamicLineWidth)
+			dynamicStates.push_back(vk::DynamicState::eLineWidth); // NOTE: Added by Hazel
+		if (pso->usesBlendConstants)
             dynamicStates.push_back(vk::DynamicState::eBlendConstants);
         if (pso->desc.renderState.depthStencilState.dynamicStencilRef)
             dynamicStates.push_back(vk::DynamicState::eStencilReference);
@@ -521,7 +523,6 @@ namespace nvrhi::vulkan
 
     static vk::Viewport VKViewportWithDXCoords(const Viewport& v)
     {
-        // requires VK_KHR_maintenance1 which allows negative-height to indicate an inverted coord space to match DX
         return vk::Viewport(v.minX, v.maxY, v.maxX - v.minX, -(v.maxY - v.minY), v.minZ, v.maxZ);
     }
 
@@ -534,7 +535,7 @@ namespace nvrhi::vulkan
 
         if (m_EnableAutomaticBarriers)
         {
-            trackResourcesAndBarriers(state);
+            insertGraphicsResourceBarriers(state);
         }
 
         bool anyBarriers = this->anyBarriers();
@@ -644,6 +645,12 @@ namespace nvrhi::vulkan
             vk::Extent2D shadingRate = convertFragmentShadingRate(state.shadingRateState.shadingRate);
             m_CurrentCmdBuf->cmdBuf.setFragmentShadingRateKHR(&shadingRate, combiners);
         }
+
+		// NOTE: Added by Hazel
+		if (state.lineWidth != 0.0f)
+		{
+			m_CurrentCmdBuf->cmdBuf.setLineWidth(state.lineWidth);
+		}
 
         m_CurrentGraphicsState = state;
         m_CurrentComputeState = ComputeState();

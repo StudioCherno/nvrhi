@@ -209,35 +209,7 @@ namespace nvrhi::vulkan
 #endif
     }
 
-    struct ResourceStateMappingInternal
-    {
-        ResourceStates nvrhiState;
-        vk::PipelineStageFlags2 stageFlags;
-        vk::AccessFlags2 accessMask;
-        vk::ImageLayout imageLayout;
-
-        ResourceStateMapping AsResourceStateMapping() const 
-        {
-            // It's safe to cast vk::AccessFlags2 -> vk::AccessFlags and vk::PipelineStageFlags2 -> vk::PipelineStageFlags (as long as the enum exist in both versions!),
-            // synchronization2 spec says: "The new flags are identical to the old values within the 32-bit range, with new stages and bits beyond that."
-            // The below stages are exclustive to synchronization2
-            assert((stageFlags & vk::PipelineStageFlagBits2::eMicromapBuildEXT) != vk::PipelineStageFlagBits2::eMicromapBuildEXT);
-            assert((accessMask & vk::AccessFlagBits2::eMicromapWriteEXT) != vk::AccessFlagBits2::eMicromapWriteEXT);
-            return
-                ResourceStateMapping(nvrhiState,
-                    reinterpret_cast<const vk::PipelineStageFlags&>(stageFlags),
-                    reinterpret_cast<const vk::AccessFlags&>(accessMask),
-                    imageLayout
-                );
-        }
-
-        ResourceStateMapping2 AsResourceStateMapping2() const
-        {
-            return ResourceStateMapping2(nvrhiState, stageFlags, accessMask, imageLayout);
-        }
-    };
-
-    static const ResourceStateMappingInternal g_ResourceStateMap[] =
+    static const ResourceStateMapping g_ResourceStateMap[] =
     {
         { ResourceStates::Common,
             vk::PipelineStageFlagBits2::eTopOfPipe,
@@ -341,9 +313,9 @@ namespace nvrhi::vulkan
             vk::ImageLayout::eUndefined },
     };
 
-    ResourceStateMappingInternal convertResourceStateInternal(ResourceStates state)
+    ResourceStateMapping convertResourceState(ResourceStates state, bool isImage)
     {
-        ResourceStateMappingInternal result = {};
+        ResourceStateMapping result = {};
 
         constexpr uint32_t numStateBits = sizeof(g_ResourceStateMap) / sizeof(g_ResourceStateMap[0]);
 
@@ -356,16 +328,26 @@ namespace nvrhi::vulkan
 
             if (stateTmp & bit)
             {
-                const ResourceStateMappingInternal& mapping = g_ResourceStateMap[bitIndex];
+                const ResourceStateMapping& mapping = g_ResourceStateMap[bitIndex];
 
                 assert(uint32_t(mapping.nvrhiState) == bit);
-                assert(result.imageLayout == vk::ImageLayout::eUndefined || mapping.imageLayout == vk::ImageLayout::eUndefined || result.imageLayout == mapping.imageLayout);
+                if (isImage)
+                {
+                    // If we're converting the state for an image, make sure that the requested state bits
+                    // do not translate to different image layouts, which would be impossible to combine.
+                    // For buffers, the image layout doesn't matter.
+                    assert(result.imageLayout == vk::ImageLayout::eUndefined
+                        || mapping.imageLayout == vk::ImageLayout::eUndefined
+                        || result.imageLayout == mapping.imageLayout);
+                }
 
                 result.nvrhiState = ResourceStates(result.nvrhiState | mapping.nvrhiState);
                 result.accessMask |= mapping.accessMask;
                 result.stageFlags |= mapping.stageFlags;
-                if (mapping.imageLayout != vk::ImageLayout::eUndefined)
+                if (isImage && mapping.imageLayout != vk::ImageLayout::eUndefined)
+                {
                     result.imageLayout = mapping.imageLayout;
+                }
 
                 stateTmp &= ~bit;
             }
@@ -376,18 +358,6 @@ namespace nvrhi::vulkan
         assert(result.nvrhiState == state);
 
         return result;
-    }
-
-    ResourceStateMapping convertResourceState(ResourceStates state)
-    {
-        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state);
-        return mapping.AsResourceStateMapping();
-    }
-
-    ResourceStateMapping2 convertResourceState2(ResourceStates state)
-    {
-        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state);
-        return mapping.AsResourceStateMapping2();
     }
 
     const char* resultToString(VkResult result)

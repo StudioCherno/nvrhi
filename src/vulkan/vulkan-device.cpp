@@ -83,15 +83,14 @@ namespace nvrhi::vulkan
             { VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &m_Context.extensions.KHR_acceleration_structure },
             { VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, &m_Context.extensions.buffer_device_address },
             { VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, &m_Context.extensions.KHR_fragment_shading_rate },
-            { VK_KHR_MAINTENANCE1_EXTENSION_NAME, &m_Context.extensions.KHR_maintenance1 },
             { VK_KHR_RAY_QUERY_EXTENSION_NAME,&m_Context.extensions.KHR_ray_query },
             { VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &m_Context.extensions.KHR_ray_tracing_pipeline },
-            { VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, &m_Context.extensions.KHR_synchronization2 },
-            { VK_NV_MESH_SHADER_EXTENSION_NAME, &m_Context.extensions.NV_mesh_shader },
+            { VK_EXT_MESH_SHADER_EXTENSION_NAME, &m_Context.extensions.EXT_mesh_shader },
             { VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &m_Context.extensions.NV_ray_tracing_invocation_reorder },
             { VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, &m_Context.extensions.NV_cluster_acceleration_structure },
             { VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME, &m_Context.extensions.EXT_mutable_descriptor_type },
             { VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME, &m_Context.extensions.NV_cooperative_vector },
+            { VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, &m_Context.extensions.NV_ray_tracing_linear_swept_spheres },
 #if NVRHI_WITH_AFTERMATH
             { VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostic_checkpoints },
             { VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostics_config }
@@ -203,12 +202,6 @@ namespace nvrhi::vulkan
         m_Context.messageCallback = desc.errorCB;
         m_Context.logBufferLifetime = desc.logBufferLifetime;
 
-        if (m_Context.extensions.EXT_opacity_micromap && !m_Context.extensions.KHR_synchronization2)
-        {
-            m_Context.warning(
-                "EXT_opacity_micromap is used without KHR_synchronization2 which is nessesary for OMM Array state transitions. Feature::RayTracingOpacityMicromap will be disabled.");
-        }
-
         if (m_Context.extensions.KHR_fragment_shading_rate)
         {
             vk::PhysicalDeviceFeatures2 deviceFeatures2;
@@ -220,6 +213,13 @@ namespace nvrhi::vulkan
         {
             vk::PhysicalDeviceFeatures2 deviceFeatures2;
             deviceFeatures2.setPNext(&m_Context.coopVecFeatures);
+            m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
+        }
+
+        if (m_Context.extensions.NV_ray_tracing_linear_swept_spheres)
+        {
+            vk::PhysicalDeviceFeatures2 deviceFeatures2;
+            deviceFeatures2.setPNext(&m_Context.linearSweptSpheresFeatures);
             m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
         }
 #ifdef NVRHI_WITH_RTXMU
@@ -346,7 +346,7 @@ namespace nvrhi::vulkan
 #ifdef NVRHI_WITH_RTXMU
             return false; // RTXMU does not support OMMs
 #else
-            return m_Context.extensions.EXT_opacity_micromap && m_Context.extensions.KHR_synchronization2;
+            return m_Context.extensions.EXT_opacity_micromap;
 #endif
         case Feature::RayQuery:
             return m_Context.extensions.KHR_ray_query;
@@ -363,7 +363,7 @@ namespace nvrhi::vulkan
         case Feature::ShaderSpecializations:
             return true;
         case Feature::Meshlets:
-            return m_Context.extensions.NV_mesh_shader;
+            return m_Context.extensions.EXT_mesh_shader;
         case Feature::VariableRateShading:
             if (pInfo)
             {
@@ -409,6 +409,10 @@ namespace nvrhi::vulkan
             return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVector;
         case Feature::CooperativeVectorTraining:
             return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVectorTraining;
+        case Feature::Spheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.spheres;
+        case Feature::LinearSweptSpheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.linearSweptSpheres;
         default:
             return false;
         }
@@ -708,6 +712,12 @@ namespace nvrhi::vulkan
 
         const vk::Result res = m_Allocator.allocateMemory(heap, memoryRequirements, memoryPropertyFlags, enableDeviceAddress);
 
+        if (res == vk::Result::eSuccess)
+        {
+            bool deviceLocal = (memoryPropertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal) != vk::MemoryPropertyFlags{};
+            m_Allocator.trackAllocation(heap->memory, memoryRequirements.size, VulkanAllocator::ResourceType::Other, deviceLocal);
+        }
+
         if (res != vk::Result::eSuccess)
         {
             std::stringstream ss;
@@ -732,6 +742,7 @@ namespace nvrhi::vulkan
     {
         if (memory && managed)
         {
+            m_Allocator.untrackAllocation(memory);
             m_Allocator.freeMemory(this);
             memory = vk::DeviceMemory();
         }

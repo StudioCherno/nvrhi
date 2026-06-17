@@ -71,47 +71,51 @@ namespace nvrhi::vulkan
         const rt::GeometryDesc& src,
         vk::AccelerationStructureGeometryKHR& dst,
         vk::AccelerationStructureTrianglesOpacityMicromapEXT& dstOmm,
+        vk::AccelerationStructureGeometryLinearSweptSpheresDataNV& dstLss,
         uint32_t& maxPrimitiveCount,
         vk::AccelerationStructureBuildRangeInfoKHR* pRange,
         const VulkanContext& context,
         UploadManager* uploadManager,
         uint64_t currentVersion)
     {
+        auto convertIndexFormatToType = [&context](const nvrhi::Format indexFormat, const bool supportUint8) {
+            switch (indexFormat)  // NOLINT(clang-diagnostic-switch-enum)
+            {
+            case Format::R8_UINT:
+                if (supportUint8)
+                {
+                    return vk::IndexType::eUint8EXT;
+                }
+                else
+                {
+                    context.error("UINT8 index type is not supported by the current ray tracing geometry configuration");
+                    return vk::IndexType::eNoneKHR;
+                }
+            case Format::R16_UINT:
+                return vk::IndexType::eUint16;
+            case Format::R32_UINT:
+                return vk::IndexType::eUint32;
+            case Format::UNKNOWN:
+                return vk::IndexType::eNoneKHR;
+            default:
+                context.error("Unsupported ray tracing geometry index type");
+                return vk::IndexType::eNoneKHR;
+            }
+        };
+
         switch (src.geometryType)
         {
         case rt::GeometryType::Triangles: {
             const rt::GeometryTriangles& srct = src.geometryData.triangles;
             vk::AccelerationStructureGeometryTrianglesDataKHR dstt;
 
-            switch (srct.indexFormat)  // NOLINT(clang-diagnostic-switch-enum)
-            {
-            case Format::R8_UINT:
-                dstt.setIndexType(vk::IndexType::eUint8EXT);
-                break;
-
-            case Format::R16_UINT:
-                dstt.setIndexType(vk::IndexType::eUint16);
-                break;
-
-            case Format::R32_UINT:
-                dstt.setIndexType(vk::IndexType::eUint32);
-                break;
-
-            case Format::UNKNOWN:
-                dstt.setIndexType(vk::IndexType::eNoneKHR);
-                break;
-
-            default:
-                context.error("Unsupported ray tracing geometry index type");
-                dstt.setIndexType(vk::IndexType::eNoneKHR);
-                break;
-            }
+            dstt.setIndexType(convertIndexFormatToType(srct.indexFormat, true));
+            dstt.setIndexData(getBufferAddress(srct.indexBuffer, srct.indexOffset));
 
             dstt.setVertexFormat(vk::Format(convertFormat(srct.vertexFormat)));
             dstt.setVertexData(getBufferAddress(srct.vertexBuffer, srct.vertexOffset));
             dstt.setVertexStride(srct.vertexStride);
             dstt.setMaxVertex(std::max(srct.vertexCount, 1u) - 1u);
-            dstt.setIndexData(getBufferAddress(srct.indexBuffer, srct.indexOffset));
 
             if (src.useTransform)
             {
@@ -137,6 +141,7 @@ namespace nvrhi::vulkan
                     else
                     {
                         context.error("Couldn't suballocate an upload buffer for geometry transform.");
+                        return;
                     }
                 }
                 else
@@ -193,9 +198,74 @@ namespace nvrhi::vulkan
             break;
         }
         case rt::GeometryType::Spheres:
-        case rt::GeometryType::Lss:
             utils::NotImplemented();
             break;
+        case rt::GeometryType::Lss: {
+            const rt::GeometryLss& srcLss = src.geometryData.lss;
+
+            if (srcLss.indexBuffer)
+            {
+                dstLss.setIndexType(convertIndexFormatToType(srcLss.indexFormat, false));
+                dstLss.setIndexData(getBufferAddress(srcLss.indexBuffer, srcLss.indexOffset));
+                dstLss.setIndexStride(srcLss.indexStride);
+
+                switch (srcLss.primitiveFormat)
+                {
+                case rt::GeometryLssPrimitiveFormat::List:
+                    dstLss.setIndexingMode(vk::RayTracingLssIndexingModeNV::eList);
+                    break;
+                case rt::GeometryLssPrimitiveFormat::SuccessiveImplicit:
+                    dstLss.setIndexingMode(vk::RayTracingLssIndexingModeNV::eSuccessive);
+                    break;
+                default:
+                    context.error("Unsupported LSS primitive format type");
+                    return;
+                }
+            }
+            else
+            {
+                // https://docs.vulkan.org/refpages/latest/refpages/source/VkAccelerationStructureGeometryLinearSweptSpheresDataNV.html#VUID-VkAccelerationStructureGeometryLinearSweptSpheresDataNV-indexingMode-10427
+                if (srcLss.primitiveFormat != rt::GeometryLssPrimitiveFormat::List)
+                {
+                    context.error("Unsupported LSS primitive format type. If indexingMode is VK_RAY_TRACING_LSS_INDEXING_MODE_SUCCESSIVE_NV, indexData must NOT be NULL");
+                    return;
+                }
+
+                dstLss.setIndexType(vk::IndexType::eNoneKHR);
+                dstLss.setIndexStride(0);
+                dstLss.setIndexingMode(vk::RayTracingLssIndexingModeNV::eList);
+            }
+
+            dstLss.setVertexFormat(vk::Format(convertFormat(srcLss.vertexPositionFormat)));
+            dstLss.setVertexData(getBufferAddress(srcLss.vertexBuffer, srcLss.vertexPositionOffset));
+            dstLss.setVertexStride(srcLss.vertexPositionStride);
+
+            dstLss.setRadiusFormat(vk::Format(convertFormat(srcLss.vertexRadiusFormat)));
+            dstLss.setRadiusData(getBufferAddress(srcLss.vertexBuffer, srcLss.vertexRadiusOffset));
+            dstLss.setRadiusStride(srcLss.vertexRadiusStride);
+
+            vk::RayTracingLssPrimitiveEndCapsModeNV endcapMode = vk::RayTracingLssPrimitiveEndCapsModeNV::eNone;
+            switch (srcLss.endcapMode)
+            {
+            case rt::GeometryLssEndcapMode::None:
+                endcapMode = vk::RayTracingLssPrimitiveEndCapsModeNV::eNone;
+                break;
+            case rt::GeometryLssEndcapMode::Chained:
+                endcapMode = vk::RayTracingLssPrimitiveEndCapsModeNV::eChained;
+                break;
+            default:
+                context.error("Unsupported LSS end cap mode type");
+                break;
+            }
+            dstLss.setEndCapsMode(endcapMode);
+
+            maxPrimitiveCount = srcLss.primitiveCount;
+
+            dst.setGeometryType(vk::GeometryTypeNV::eLinearSweptSpheresNV);
+            dst.setPNext(&dstLss);
+
+            break;
+        }
         }
 
         if (pRange)
@@ -267,6 +337,7 @@ namespace nvrhi::vulkan
         {
             std::vector<vk::AccelerationStructureGeometryKHR> geometries;
             std::vector<vk::AccelerationStructureTrianglesOpacityMicromapEXT> omms;
+            std::vector<vk::AccelerationStructureGeometryLinearSweptSpheresDataNV> lss;
             std::vector<uint32_t> maxPrimitiveCounts;
 
             auto buildInfo = vk::AccelerationStructureBuildGeometryInfoKHR();
@@ -286,11 +357,12 @@ namespace nvrhi::vulkan
             {
                 geometries.resize(desc.bottomLevelGeometries.size());
                 omms.resize(desc.bottomLevelGeometries.size());
+                lss.resize(desc.bottomLevelGeometries.size());
                 maxPrimitiveCounts.resize(desc.bottomLevelGeometries.size());
 
                 for (size_t i = 0; i < desc.bottomLevelGeometries.size(); i++)
                 {
-                    convertBottomLevelGeometry(desc.bottomLevelGeometries[i],  geometries[i], omms[i], maxPrimitiveCounts[i],
+                    convertBottomLevelGeometry(desc.bottomLevelGeometries[i], geometries[i], omms[i], lss[i], maxPrimitiveCounts[i],
                         nullptr, m_Context, nullptr, 0);
                 }
 
@@ -543,6 +615,7 @@ namespace nvrhi::vulkan
             requireBufferState(desc.perOmmDescs, ResourceStates::OpacityMicromapBuildInput);
 
             requireBufferState(omm->dataBuffer, nvrhi::ResourceStates::OpacityMicromapWrite);
+            m_BindingStatesDirty = true;
         }
 
         if (desc.trackLiveness)
@@ -606,10 +679,12 @@ namespace nvrhi::vulkan
 
         std::vector<vk::AccelerationStructureGeometryKHR> geometries;
         std::vector<vk::AccelerationStructureTrianglesOpacityMicromapEXT> omms;
+        std::vector<vk::AccelerationStructureGeometryLinearSweptSpheresDataNV> lss;
         std::vector<vk::AccelerationStructureBuildRangeInfoKHR> buildRanges;
         std::vector<uint32_t> maxPrimitiveCounts;
         geometries.resize(numGeometries);
         omms.resize(numGeometries);
+        lss.resize(numGeometries);
         maxPrimitiveCounts.resize(numGeometries);
         buildRanges.resize(numGeometries);
 
@@ -617,7 +692,7 @@ namespace nvrhi::vulkan
 
         for (size_t i = 0; i < numGeometries; i++)
         {
-            convertBottomLevelGeometry(pGeometries[i], geometries[i], omms[i], maxPrimitiveCounts[i], &buildRanges[i],
+            convertBottomLevelGeometry(pGeometries[i], geometries[i], omms[i], lss[i], maxPrimitiveCounts[i], &buildRanges[i],
                 m_Context, m_UploadManager.get(), currentVersion);
 
             const rt::GeometryDesc& src = pGeometries[i];
@@ -647,11 +722,23 @@ namespace nvrhi::vulkan
                 break;
             }
             case rt::GeometryType::Spheres:
-            case rt::GeometryType::Lss:
                 utils::NotImplemented();
                 break;
+            case rt::GeometryType::Lss: {
+                const rt::GeometryLss& srcLss = src.geometryData.lss;
+                if (m_EnableAutomaticBarriers)
+                {
+                    if (srcLss.indexBuffer)
+                        requireBufferState(srcLss.indexBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
+                    if (srcLss.vertexBuffer)
+                        requireBufferState(srcLss.vertexBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
+                }
+                break;
+            }
             }
         }
+
+        m_BindingStatesDirty = true;
 
         auto buildInfo = vk::AccelerationStructureBuildGeometryInfoKHR()
             .setType(vk::AccelerationStructureTypeKHR::eBottomLevel)
@@ -918,6 +1005,7 @@ namespace nvrhi::vulkan
         if (m_EnableAutomaticBarriers)
         {
             requireBufferState(as->dataBuffer, nvrhi::ResourceStates::AccelStructWrite);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 
@@ -938,6 +1026,7 @@ namespace nvrhi::vulkan
         {
             requireBufferState(as->dataBuffer, nvrhi::ResourceStates::AccelStructWrite);
             requireBufferState(instanceBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 
@@ -980,6 +1069,7 @@ namespace nvrhi::vulkan
                 requireBufferState(outSizesBuffer, ResourceStates::UnorderedAccess);
             if (outAccelerationStructuresBuffer)
                 requireBufferState(outAccelerationStructuresBuffer, ResourceStates::AccelStructWrite);
+            m_BindingStatesDirty = true;
         }
 
         // Track resources for liveness
@@ -1128,6 +1218,108 @@ namespace nvrhi::vulkan
         return getBufferAddress(dataBuffer, 0).deviceAddress;
     }
 
+    void ShaderTable::bake(uint8_t* uploadCpuVA, vk::DeviceAddress uploadGpuVA, ShaderTableState& state)
+    {
+        const uint32_t shaderGroupHandleSize = m_Context.rayTracingPipelineProperties.shaderGroupHandleSize;
+        const uint32_t shaderGroupBaseAlignment = m_Context.rayTracingPipelineProperties.shaderGroupBaseAlignment;
+
+        // Copy the shader and group handles into the device SBT, record the pointers and the version.
+
+        state.version = version;
+
+        // ... RayGen
+
+        uint32_t sbtIndex = 0;
+        memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
+            pipeline->shaderGroupHandles.data() + shaderGroupHandleSize * rayGenerationShader,
+            shaderGroupHandleSize);
+        state.rayGen.setDeviceAddress(uploadGpuVA + sbtIndex * shaderGroupBaseAlignment);
+        state.rayGen.setSize(shaderGroupBaseAlignment);
+        state.rayGen.setStride(shaderGroupBaseAlignment);
+        sbtIndex++;
+
+        // ... Miss
+
+        if (!missShaders.empty())
+        {
+            state.miss.setDeviceAddress(uploadGpuVA + sbtIndex * shaderGroupBaseAlignment);
+            for (uint32_t shaderGroupIndex : missShaders)
+            {
+                memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
+                    pipeline->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
+                    shaderGroupHandleSize);
+                sbtIndex++;
+            }
+            state.miss.setSize(shaderGroupBaseAlignment * uint32_t(missShaders.size()));
+            state.miss.setStride(shaderGroupBaseAlignment);
+        }
+        else
+        {
+            state.miss = vk::StridedDeviceAddressRegionKHR();
+        }
+
+        // ... Hit Groups
+
+        if (!hitGroups.empty())
+        {
+            state.hitGroups.setDeviceAddress(uploadGpuVA + sbtIndex * shaderGroupBaseAlignment);
+            for (uint32_t shaderGroupIndex : hitGroups)
+            {
+                memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
+                    pipeline->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
+                    shaderGroupHandleSize);
+                sbtIndex++;
+            }
+            state.hitGroups.setSize(shaderGroupBaseAlignment * uint32_t(hitGroups.size()));
+            state.hitGroups.setStride(shaderGroupBaseAlignment);
+        }
+        else
+        {
+            state.hitGroups = vk::StridedDeviceAddressRegionKHR();
+        }
+
+        // ... Callable
+
+        if (!callableShaders.empty())
+        {
+            state.callable.setDeviceAddress(uploadGpuVA + sbtIndex * shaderGroupBaseAlignment);
+            for (uint32_t shaderGroupIndex : callableShaders)
+            {
+                memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
+                    pipeline->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
+                    shaderGroupHandleSize);
+                sbtIndex++;
+            }
+            state.callable.setSize(shaderGroupBaseAlignment * uint32_t(callableShaders.size()));
+            state.callable.setStride(shaderGroupBaseAlignment);
+        }
+        else
+        {
+            state.callable = vk::StridedDeviceAddressRegionKHR();
+        }
+    }
+
+    ShaderTableState& CommandList::getShaderTableState(rt::IShaderTable* _shaderTable)
+    {
+        ShaderTable* shaderTable = checked_cast<ShaderTable*>(_shaderTable);
+        if (shaderTable->getDesc().isCached)
+            return shaderTable->cacheState;
+
+        auto it = m_UncachedShaderTableStates.find(shaderTable);
+
+        if (it != m_UncachedShaderTableStates.end())
+        {
+            return *it->second;
+        }
+
+        std::unique_ptr<ShaderTableState> statePtr = std::make_unique<ShaderTableState>();
+
+        ShaderTableState& state = *statePtr;
+        m_UncachedShaderTableStates.insert(std::make_pair(shaderTable, std::move(statePtr)));
+
+        return state;
+    }
+
     void CommandList::setRayTracingState(const rt::State& state)
     {
         if (!state.shaderTable)
@@ -1144,15 +1336,7 @@ namespace nvrhi::vulkan
 
         if (m_EnableAutomaticBarriers)
         {
-            for (size_t i = 0; i < state.bindings.size() && i < pso->desc.globalBindingLayouts.size(); i++)
-            {
-                BindingLayout* layout = checked_cast<BindingLayout*>(pso->desc.globalBindingLayouts[i].Get());
-
-                if ((layout->desc.visibility & ShaderType::AllRayTracing) == 0)
-                    continue;
-                
-                setResourceStatesForBindingSet(state.bindings[i]);
-            }
+            insertRayTracingResourceBarriers(state);
         }
 
         if (m_CurrentRayTracingState.shaderTable != state.shaderTable)
@@ -1172,23 +1356,31 @@ namespace nvrhi::vulkan
             bindBindingSets(vk::PipelineBindPoint::eRayTracingKHR, pso->pipelineLayout, state.bindings, pso->descriptorSetIdxToBindingIdx);
         }
 
-        // Rebuild the SBT if we're binding a new one or if it's been changed since the previous bind.
+        // Rebuild the SBT if it's uncached and we're using it for the first time in this command list,
+        // or if it's been changed since the previous build.
 
-        if (m_CurrentRayTracingState.shaderTable != shaderTable || m_CurrentShaderTablePointers.version != shaderTable->version)
+        bool const shaderTableCached = shaderTable->getDesc().isCached;
+        ShaderTableState& shaderTableState = getShaderTableState(shaderTable);
+        bool const rebuildShaderTable = shaderTableState.version != shaderTable->version;
+
+        if (rebuildShaderTable)
         {
-            const uint32_t shaderGroupHandleSize = m_Context.rayTracingPipelineProperties.shaderGroupHandleSize;
-            const uint32_t shaderGroupBaseAlignment = m_Context.rayTracingPipelineProperties.shaderGroupBaseAlignment;
+            size_t const shaderTableSize = shaderTable->getUploadSize();
 
-            const uint32_t shaderTableSize = shaderTable->getNumEntries() * shaderGroupBaseAlignment;
+            if (shaderTableCached && (!shaderTable->cache || shaderTableSize > shaderTable->cache->getDesc().byteSize))
+            {
+                m_Context.error("Required shader table size is larger than the allocated cache. Increase ShaderTableDesc::maxEntries.");
+                return;
+            }
 
-            // First, allocate a piece of the upload buffer. That will be our SBT on the device.
+            // Allocate a piece of the upload buffer. That will be our SBT on the device.
 
             Buffer* uploadBuffer = nullptr;
             uint64_t uploadOffset = 0;
             uint8_t* uploadCpuVA = nullptr;
             bool allocated = m_UploadManager->suballocateBuffer(shaderTableSize, &uploadBuffer, &uploadOffset, (void**)&uploadCpuVA,
                 MakeVersion(m_CurrentCmdBuf->recordingID, m_CommandListParameters.queueType, false),
-                shaderGroupBaseAlignment);
+                m_Context.rayTracingPipelineProperties.shaderGroupBaseAlignment);
 
             if (!allocated)
             {
@@ -1199,81 +1391,36 @@ namespace nvrhi::vulkan
             assert(uploadCpuVA);
             assert(uploadBuffer);
 
-            // Copy the shader and group handles into the device SBT, record the pointers.
+            vk::DeviceAddress const effectiveGpuVA = shaderTableCached
+                ? shaderTable->cache->getGpuVirtualAddress()
+                : uploadBuffer->getGpuVirtualAddress() + uploadOffset;
 
-            vk::StridedDeviceAddressRegionKHR rayGenHandle;
-            vk::StridedDeviceAddressRegionKHR missHandles;
-            vk::StridedDeviceAddressRegionKHR hitGroupHandles;
-            vk::StridedDeviceAddressRegionKHR callableHandles;
+            // Build the SBT in the upload buffer.
 
-            // ... RayGen
+            shaderTable->bake(uploadCpuVA, effectiveGpuVA, shaderTableState);
 
-            uint32_t sbtIndex = 0;
-            memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
-                pso->shaderGroupHandles.data() + shaderGroupHandleSize * shaderTable->rayGenerationShader,
-                shaderGroupHandleSize);
-            rayGenHandle.setDeviceAddress(uploadBuffer->deviceAddress + uploadOffset + sbtIndex * shaderGroupBaseAlignment);
-            rayGenHandle.setSize(shaderGroupBaseAlignment);
-            rayGenHandle.setStride(shaderGroupBaseAlignment);
-            sbtIndex++;
+            // Copy the built SBT into the cache buffer, if it exists.
 
-            // ... Miss
-
-            if (!shaderTable->missShaders.empty())
+            if (shaderTableCached)
             {
-                missHandles.setDeviceAddress(uploadBuffer->deviceAddress + uploadOffset + sbtIndex * shaderGroupBaseAlignment);
-                for (uint32_t shaderGroupIndex : shaderTable->missShaders)
-                {
-                    memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
-                        pso->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
-                        shaderGroupHandleSize);
-                    sbtIndex++;
-                }
-                missHandles.setSize(shaderGroupBaseAlignment * uint32_t(shaderTable->missShaders.size()));
-                missHandles.setStride(shaderGroupBaseAlignment);
+                copyBuffer(shaderTable->cache, 0, uploadBuffer, uploadOffset, shaderTableSize);
             }
-
-            // ... Hit Groups
-
-            if (!shaderTable->hitGroups.empty())
-            {
-                hitGroupHandles.setDeviceAddress(uploadBuffer->deviceAddress + uploadOffset + sbtIndex * shaderGroupBaseAlignment);
-                for (uint32_t shaderGroupIndex : shaderTable->hitGroups)
-                {
-                    memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
-                        pso->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
-                        shaderGroupHandleSize);
-                    sbtIndex++;
-                }
-                hitGroupHandles.setSize(shaderGroupBaseAlignment * uint32_t(shaderTable->hitGroups.size()));
-                hitGroupHandles.setStride(shaderGroupBaseAlignment);
-            }
-
-            // ... Callable
-
-            if (!shaderTable->callableShaders.empty())
-            {
-                callableHandles.setDeviceAddress(uploadBuffer->deviceAddress + uploadOffset + sbtIndex * shaderGroupBaseAlignment);
-                for (uint32_t shaderGroupIndex : shaderTable->callableShaders)
-                {
-                    memcpy(uploadCpuVA + sbtIndex * shaderGroupBaseAlignment,
-                        pso->shaderGroupHandles.data() + shaderGroupHandleSize * shaderGroupIndex,
-                        shaderGroupHandleSize);
-                    sbtIndex++;
-                }
-                callableHandles.setSize(shaderGroupBaseAlignment * uint32_t(shaderTable->callableShaders.size()));
-                callableHandles.setStride(shaderGroupBaseAlignment);
-            }
-
-            // Store the device pointers to the SBT for use in dispatchRays later, and the version.
-
-            m_CurrentShaderTablePointers.rayGen = rayGenHandle;
-            m_CurrentShaderTablePointers.miss = missHandles;
-            m_CurrentShaderTablePointers.hitGroups = hitGroupHandles;
-            m_CurrentShaderTablePointers.callable = callableHandles;
-            m_CurrentShaderTablePointers.version = shaderTable->version;
         }
-        
+
+        if (shaderTableCached)
+        {
+            // Ensure that the cache buffer is in the right state.
+            // It's not conditional on m_EnableAutomaticBarriers because the cache is an internal object,
+            // completely invisible to the application, and so its state must be handled by NVRHI.
+            setBufferState(shaderTable->cache, nvrhi::ResourceStates::ShaderResource);
+        }
+
+        if (shaderTableCached || rebuildShaderTable)
+        {
+            // If the shader table is not cached, then it's rebuilt at least once per CL, and we can AddRef it once then
+            m_CurrentCmdBuf->referencedResources.push_back(shaderTable);
+        }
+
         commitBarriers();
 
         m_CurrentGraphicsState = GraphicsState();
@@ -1289,11 +1436,13 @@ namespace nvrhi::vulkan
 
         updateRayTracingVolatileBuffers();
 
+        ShaderTableState& shaderTableState = getShaderTableState(m_CurrentRayTracingState.shaderTable);
+
         m_CurrentCmdBuf->cmdBuf.traceRaysKHR(
-            &m_CurrentShaderTablePointers.rayGen,
-            &m_CurrentShaderTablePointers.miss,
-            &m_CurrentShaderTablePointers.hitGroups,
-            &m_CurrentShaderTablePointers.callable,
+            &shaderTableState.rayGen,
+            &shaderTableState.miss,
+            &shaderTableState.hitGroups,
+            &shaderTableState.callable,
             args.width, args.height, args.depth);
     }
 
@@ -1330,7 +1479,7 @@ namespace nvrhi::vulkan
 
     rt::PipelineHandle Device::createRayTracingPipeline(const rt::PipelineDesc& desc)
     {
-        RayTracingPipeline* pso = new RayTracingPipeline(m_Context);
+        RayTracingPipeline* pso = new RayTracingPipeline(m_Context, this);
         pso->desc = desc;
 
         vk::Result res = createPipelineLayout(
@@ -1476,12 +1625,16 @@ namespace nvrhi::vulkan
         auto pipelineClusters = vk::RayTracingPipelineClusterAccelerationStructureCreateInfoNV()
             .setAllowClusterAccelerationStructure(true);
 
+        auto pipelineFlags2 = vk::PipelineCreateFlags2CreateInfoKHR();
+        pipelineFlags2.setFlags(vk::PipelineCreateFlagBits2::eRayTracingAllowSpheresAndLinearSweptSpheresNV);
+
         auto pipelineInfo = vk::RayTracingPipelineCreateInfoKHR()
             .setStages(shaderStages)
             .setGroups(shaderGroups)
             .setLayout(pso->pipelineLayout)
             .setMaxPipelineRayRecursionDepth(desc.maxRecursionDepth)
-            .setPLibraryInfo(&libraryInfo);
+            .setPLibraryInfo(&libraryInfo)
+            .setPNext(&pipelineFlags2);
 
         if (m_Context.extensions.NV_cluster_acceleration_structure)
         {
@@ -1523,10 +1676,32 @@ namespace nvrhi::vulkan
         }
     }
 
-    rt::ShaderTableHandle RayTracingPipeline::createShaderTable()
+    rt::ShaderTableHandle RayTracingPipeline::createShaderTable(rt::ShaderTableDesc const& stDesc)
     {
-        ShaderTable* st = new ShaderTable(m_Context, this);
-        return rt::ShaderTableHandle::Create(st);
+        BufferHandle cache;
+        if (stDesc.isCached)
+        {
+            if (stDesc.maxEntries == 0)
+            {
+                m_Context.error("maxEntries must be nonzero for a cached ShaderTable");
+                return nullptr;
+            }
+            
+            BufferDesc bufferDesc = BufferDesc()
+                .setDebugName(stDesc.debugName)
+                .setByteSize(getShaderTableEntrySize() * stDesc.maxEntries)
+                .setIsShaderBindingTable(true)
+                .enableAutomaticStateTracking(ResourceStates::ShaderResource);
+
+            cache = m_Device->createBuffer(bufferDesc);
+            if (!cache)
+                return nullptr;
+        }
+
+        ShaderTable* shaderTable = new ShaderTable(m_Context, this, stDesc);
+        shaderTable->cache = cache;
+
+        return rt::ShaderTableHandle::Create(shaderTable);
     }
 
     Object RayTracingPipeline::getNativeObject(ObjectType objectType)
